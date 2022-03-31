@@ -102,4 +102,4 @@ def reshape_sum_backward(gy, x_shape, axis, keepdims):
         shape = gy.shape
 
     gy = gy.reshape(shape)  # reshape
-    return 
+    return gy
