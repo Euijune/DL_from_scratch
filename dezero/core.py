@@ -167,18 +167,6 @@ def square(x):
     f = Square()
     return f(x)
     
-class Exp(Function):
-    def forward(self, x):
-        y = np.exp(x)
-        return y
-    
-    def backward(self, gy):
-        x = self.input.data
-        gx = np.exp(x) * gy
-        return gx
-
-def exp(x):
-    return Exp()(x)
 
 class Add(Function):
     def forward(self, x0, x1):
@@ -297,3 +285,4 @@ def setup_variable():
     Variable.__truediv__ = div
     Variable.__rtruediv__ = rdiv
     Variable.__pow__ = pow
+    Variable.__getitem__ = dezero.functions.get_item
