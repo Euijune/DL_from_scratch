@@ -226,6 +226,21 @@ def sigmoid_simple(x):
     y = 1 / (1 + exp(-x))
 
 
+class ReLU(Function):
+    def forward(self, x):
+        y = np.maximum(x, 0.0)
+        return y
+
+    def backward(self, gy):
+        x, = self.inputs
+        mask = x.data > 0
+        gx = gy * mask
+        return gx
+
+def relu(x):
+    return ReLU()(x)
+
+
 # np.add.at 함수의 역전파이기도 하다
 class GetItem(Function):
     def __init__(self, slices):
