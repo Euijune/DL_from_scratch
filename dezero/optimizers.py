@@ -1,4 +1,5 @@
 import numpy as np
+from dezero import cuda
 
 class Optimizer:
     def __init__(self):
@@ -51,7 +52,8 @@ class MomentumSGD(Optimizer):
 
         # 처음 호출될 때 매개변수와 같은 타입의 데이터 생성
         if v_key not in self.vs:
-            self.vs[v_key] = np.zeros_like(param.data)
+            xp = cuda.get_array_module(param.data)
+            self.vs[v_key] = xp.zeros_like(param.data)
 
         v = self.vs[v_key]
         # 식 46.1

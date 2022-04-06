@@ -1,6 +1,7 @@
 import weakref
 import numpy as np
 import dezero.functions as F
+from dezero import cuda
 from dezero.core import Parameter
 
 
@@ -37,6 +38,14 @@ class Layer:
         for param in self.params():
             param.cleargrad()
 
+    def to_cpu(self):
+        for param in self.params():
+            param.to_cpu()
+
+    def to_gpu(self):
+        for param in self.params():
+            param.to_gpu()
+
 
 class Linear(Layer):
     def __init__(self, out_size, nobias=False, dtype=np.float32, in_size=None):
@@ -54,16 +63,17 @@ class Linear(Layer):
         else:
             self.b = Parameter(np.zeros(out_size, dtype=dtype), name='b')
 
-    def _init_W(self):
+    def _init_W(self, xp=np):
         I, O = self.in_size, self.out_size
-        W_data = np.random.randn(I, O).astype(self.dtype) * np.sqrt(1 / I)
+        W_data = xp.random.randn(I, O).astype(self.dtype) * np.sqrt(1 / I)
         self.W.data = W_data
 
     def forward(self, x):
         # 데이터를 흘려보내는 시점에 가중치를 초기화
         if self.W.data is None:
             self.in_size = x.shape[1]
-            self._init_W()
+            xp = cuda.get_array_module(x)
+            self._init_W(xp)
 
         y = F.linear(x, self.W, self.b)
         return y

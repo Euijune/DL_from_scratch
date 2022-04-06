@@ -2,6 +2,70 @@ import numpy as np
 from dezero.core import Variable, Function, as_variable, as_array
 from dezero import cuda, utils
 
+
+# =============================================================================
+# Basic functions: sin / cos / tanh / exp
+# =============================================================================
+class Sin(Function):
+    def forward(self, x):
+        xp = cuda.get_array_module(x)
+        y = xp.sin(x)
+        return y
+    
+    def backward(self, gy):
+        x, = self.inputs
+        gx = gy * cos(x)
+        return gx
+
+def sin(x):
+    return Sin()(x)
+
+class Cos(Function):
+    def forward(self, x):
+        xp = cuda.get_array_module(x)
+        y = xp.cos(x)
+        return y
+    
+    def backward(self, gy):
+        x, = self.inputs
+        gx = gy * -sin(x)
+        return gx
+
+def cos(x):
+    return Cos()(x)
+
+class Tanh(Function):
+    def forward(self, x):
+        xp = cuda.get_array_module(x)
+        y = xp.tanh(x)
+        return y
+    
+    def backward(self, gy):
+        y = self.outputs[0]()   # y는 weakref
+        gx = gy * (1 - y * y)
+        return gx
+
+def tanh(x):
+    return Tanh()(x)
+
+class Exp(Function):
+    def forward(self, x):
+        xp = cuda.get_array_module(x)
+        y = xp.exp(x)
+        return y
+    
+    def backward(self, gy):
+        x = self.input.data
+        gx = np.exp(x) * gy
+        return gx
+
+def exp(x):
+    return Exp()(x)
+
+
+# =============================================================================
+# Tensor operations: reshape / transpose / get_item
+# =============================================================================
 class Reshape(Function):
     def __init__(self, shape):
         self.shape = shape
@@ -14,10 +78,12 @@ class Reshape(Function):
     def backward(self, gy):
         return reshape(gy, self.x_shape)
 
+
 def reshape(x, shape):
     if x.shape == shape:
         return as_variable(x)
     return Reshape(shape)(x)
+
 
 class Transpose(Function):
     def __init__(self, axes=None):
@@ -39,94 +105,48 @@ class Transpose(Function):
 def transpose(x, axes=None):
     return Transpose(axes)(x)
 
-class Sin(Function):
+
+# np.add.at 함수의 역전파이기도 하다
+class GetItem(Function):
+    def __init__(self, slices):
+        self.slices = slices
+
     def forward(self, x):
-        y = np.sin(x)
+        y = x[self.slices]
         return y
-    
+
     def backward(self, gy):
         x, = self.inputs
-        gx = gy * cos(x)
+        f = GetItemGrad(self.slices, x.shape)
+        return f(gy)
+
+
+class GetItemGrad(Function):
+    def __init__(self, slices, in_shape):
+        self.slices = slices
+        self.in_shape = in_shape
+
+    def forward(self, gy):
+        xp = cuda.get_array_module(gy)
+        gx = xp.zeros(self.in_shape)
+
+        if xp is np:
+            np.add.at(gx, self.slices, gy)
+        else:
+            xp.scatter_add(gx, self.slices, gy)
         return gx
-
-def sin(x):
-    return Sin()(x)
-
-class Cos(Function):
-    def forward(self, x):
-        y = np.cos(x)
-        return y
     
-    def backward(self, gy):
-        x, = self.inputs
-        gx = gy * -sin(x)
-        return gx
+    def backward(self, ggx):
+        return get_item(ggx, self.slices)
 
-def cos(x):
-    return Cos()(x)
 
-class Tanh(Function):
-    def forward(self, x):
-        y = np.tanh(x)
-        return y
-    
-    def backward(self, gy):
-        y = self.outputs[0]()   # y는 weakref
-        gx = gy * (1 - y * y)
-        return gx
+def get_item(x, slices):
+    return GetItem(slices)(x)
 
-def tanh(x):
-    return Tanh()(x)
 
-class Exp(Function):
-    def forward(self, x):
-        y = np.exp(x)
-        return y
-    
-    def backward(self, gy):
-        x = self.input.data
-        gx = np.exp(x) * gy
-        return gx
-
-def exp(x):
-    return Exp()(x)
-
-class BroadcastTo(Function):
-    def __init__(self, shape):
-        self.shape = shape
-
-    def forward(self, x):
-        self.x_shape = x.shape
-        y = np.broadcast_to(x, self.shape)
-        return y
-
-    def backward(self, gy):
-        gx = sum_to(gy, self.x_shape)
-        return gx
-
-def broadcast_to(x, shape):
-    if x.shape == shape:
-        return as_variable(x)
-    return BroadcastTo(shape)(x)
-
-class SumTo(Function):
-    def __init__(self, shape):
-        self.shape = shape
-    
-    def forward(self, x):
-        self.x_shape = x.shape
-        y = utils.sum_to(x, self.shape)
-        return y
-    
-    def backward(self, gy):
-        gx = broadcast_to(gy, self.x_shape)
-        return gx
-
-def sum_to(x, shape):
-    if x.shape == shape:
-        return as_variable(x)
-    return SumTo(shape)(x)
-
+# =============================================================================
+# sum / sum_to / broadcast_to / matmul / linear
+# =============================================================================
 class Sum(Function):
     def __init__(self, axis, keepdims):
         self.axis = axis
@@ -146,6 +166,46 @@ class Sum(Function):
 def sum(x, axis=None, keepdims=False):
     return Sum(axis, keepdims)(x)
 
+
+class SumTo(Function):
+    def __init__(self, shape):
+        self.shape = shape
+    
+    def forward(self, x):
+        self.x_shape = x.shape
+        y = utils.sum_to(x, self.shape)
+        return y
+    
+    def backward(self, gy):
+        gx = broadcast_to(gy, self.x_shape)
+        return gx
+
+def sum_to(x, shape):
+    if x.shape == shape:
+        return as_variable(x)
+    return SumTo(shape)(x)
+
+
+class BroadcastTo(Function):
+    def __init__(self, shape):
+        self.shape = shape
+
+    def forward(self, x):
+        self.x_shape = x.shape
+        xp = cuda.get_array_module(x)
+        y = xp.broadcast_to(x, self.shape)
+        return y
+
+    def backward(self, gy):
+        gx = sum_to(gy, self.x_shape)
+        return gx
+
+def broadcast_to(x, shape):
+    if x.shape == shape:
+        return as_variable(x)
+    return BroadcastTo(shape)(x)
+
+
 class MatMul(Function):
     def forward(self, x, W):
         y = x.dot(W)
@@ -157,24 +217,10 @@ class MatMul(Function):
         gW = matmul(x.T, gy)
         return gx, gW
 
+
 def matmul(x, W):
     return MatMul()(x, W)
 
-class MeanSquaredError(Function):
-    def forward(self, x0, x1):
-        diff = x0 - x1
-        y = (diff ** 2).sum() / len(diff) 
-        return y
-
-    def backward(self, gy):
-        x0, x1 = self.inputs
-        diff = x0 - x1
-        gx0 = gy * diff * (2. / len(diff))
-        gx1 = -gx0
-        return gx0, gx1
-
-def mean_squared_error(x0, x1):
-    return MeanSquaredError()(x0, x1)
 
 class Linear(Function):
     def forward(self, x, W, b):
@@ -204,6 +250,16 @@ def linear_simple(x, W, b=None):
     t.data = None  # t의 데이터는 Add, matmul함수의 역전파에서 필요없으므로 제거
     return 
 
+
+# =============================================================================
+# activation function: sigmoid / relu / softmax
+# =============================================================================
+# memory 효율이 좋지 못한 코드
+def sigmoid_simple(x):
+    x = as_variable(x)
+    y = 1 / (1 + exp(-x))
+
+
 class Sigmoid(Function):
     def forward(self, x):
         xp = cuda.get_array_module(x)
@@ -220,15 +276,11 @@ class Sigmoid(Function):
 def sigmoid(x):
     return Sigmoid()(x)
 
-# memory 효율이 좋지 못한 코드
-def sigmoid_simple(x):
-    x = as_variable(x)
-    y = 1 / (1 + exp(-x))
-
 
 class ReLU(Function):
     def forward(self, x):
-        y = np.maximum(x, 0.0)
+        xp = cuda.get_array_module(x)
+        y = xp.maximum(x, 0.0)
         return y
 
     def backward(self, gy):
@@ -237,40 +289,16 @@ class ReLU(Function):
         gx = gy * mask
         return gx
 
+
 def relu(x):
     return ReLU()(x)
 
 
-# np.add.at 함수의 역전파이기도 하다
-class GetItem(Function):
-    def __init__(self, slices):
-        self.slices = slices
-
-    def forward(self, x):
-        y = x[self.slices]
-        return y
-
-    def backward(self, gy):
-        x, = self.inputs
-        f = GetItemGrad(self.slices, x.shape)
-        return f(gy)
-
-def get_item(x, slices):
-    return GetItem(slices)(x)
-
-
-class GetItemGrad(Function):
-    def __init__(self, slices, in_shape):
-        self.slices = slices
-        self.in_shape = in_shape
-
-    def forward(self, gy):
-        gx = np.zeros(self.in_shape)
-        np.add.at(gx, self.slices, gy)
-        return gx
-    
-    def backward(self, ggx):
-        return get_item(ggx, self.slices)
+def softmax_simple(x, axis=1):
+    x = as_variable(x)
+    y = exp(x)
+    sum_y = sum(y, axis=axis, keepdims=True)
+    return y / sum_y
 
 
 class Softmax(Function):
@@ -290,9 +318,49 @@ class Softmax(Function):
         sumdx = gx.sum(axis=self.axis, keepdims=True)
         gx -= y * sumdx
         return gx
+        
 
 def softmax(x, axis=1):
     return Softmax(axis)(x)
+
+
+# =============================================================================
+# loss function: mean_squared_error / softmax_cross_entropy
+# =============================================================================
+def mean_squared_error_simple(x0, x1):
+    x0, x1 = as_variable(x0), as_variable(x1)
+    diff = x0 - x1
+    y = sum(diff ** 2) / len(diff)
+    return y
+
+
+class MeanSquaredError(Function):
+    def forward(self, x0, x1):
+        diff = x0 - x1
+        y = (diff ** 2).sum() / len(diff) 
+        return y
+
+    def backward(self, gy):
+        x0, x1 = self.inputs
+        diff = x0 - x1
+        gx0 = gy * diff * (2. / len(diff))
+        gx1 = -gx0
+        return gx0, gx1
+
+
+def mean_squared_error(x0, x1):
+    return MeanSquaredError()(x0, x1)
+
+
+def softmax_cross_entropy_simple(x, t):
+    x, t = as_variable(x), as_variable(t)
+    N = x.shape[0]
+    p = softmax(x)
+    p = clip(p, 1e-15, 1.0)  # To avoid log(0)
+    log_p = log(p)
+    tlog_p = log_p[np.arange(N), t.data]
+    y = -1 * sum(tlog_p) / N
+    return y
 
 
 class SoftmaxCrossEntropy(Function):
@@ -321,6 +389,21 @@ def softmax_cross_entropy(x, t):
     return SoftmaxCrossEntropy()(x, t)
 
 
+# =============================================================================
+# accuracy / dropout / batch_norm / embed_id
+# =============================================================================
+def accuracy(y, t):
+    y, t = as_variable(y), as_variable(t)
+
+    pred = y.data.argmax(axis=1).reshape(t.shape)
+    result = (pred==t.data)
+    acc = result.mean()
+    return Variable(as_array(acc))
+
+
+# =============================================================================
+# clip
+# =============================================================================
 class Clip(Function):
     def __init__(self, x_min, x_max):
         self.x_min = x_min
@@ -340,12 +423,3 @@ class Clip(Function):
 
 def clip(x, x_min, x_max):
     return Clip(x_min, x_max)(x)
-
-
-def accuracy(y, t):
-    y, t = as_variable(y), as_variable(t)
-
-    pred = y.data.argmax(axis=1).reshape(t.shape)
-    result = (pred==t.data)
-    acc = result.mean()
-    return Variable(as_array(acc))
