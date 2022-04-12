@@ -124,6 +124,7 @@ class Variable:
 
 class Config:
     enable_backprop = True
+    train = True
 
 @contextlib.contextmanager
 def using_config(name, value):
@@ -133,7 +134,10 @@ def using_config(name, value):
         yield
     finally:
         setattr(Config, name, old_value)    # with 블록 바깥에서는, 원래 값인 old_value로 돌아감
-        
+
+def test_mode():
+    return using_config('train', False)
+
 class Function:
     def __call__(self, *inputs): # 가변 길이 입출력
         inputs = [as_variable(x) for x in inputs]
