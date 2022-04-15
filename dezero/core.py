@@ -102,6 +102,20 @@ class Variable:
         if self.data is not None:
             self.data = dezero.cuda.as_cupy(self.data)
 
+    def unchain(self):
+        self.creator = None
+    
+    def unchain_backward(self):
+        if self.creator is not None:
+            funcs = [self.creator]
+            while funcs:
+                f = funcs.pop()
+                for x in f.inputs:
+                    if x.creator is not None:
+                        funcs.append(x.creator)
+                        x.unchain()
+
+
     @property   # x.shape()대신 x.shape로 마치 인스턴스 변수인 것처럼 메서드를 사용 가능.
     def T(self):
         return dezero.functions.transpose(self)
